@@ -68,6 +68,41 @@ export function generateUsers(count: number = 100): User[] {
 
 export const mockUsers = generateUsers(100);
 
+// OpenClaw status per user
+export interface OpenClawStatus {
+  version: string;
+  gatewayState: 'running' | 'stopped' | 'error';
+  lastActivity: string;
+  model: string;
+  tokenUsage: { prompt: number; completion: number; total: number };
+  uptime: string;
+  channels: string[];
+}
+
+const models = ['claude-sonnet-4-20250514', 'claude-opus-4-20250514', 'gpt-4o', 'claude-3.5-haiku', 'gpt-4o-mini'];
+const versions = ['0.28.4', '0.28.3', '0.27.9', '0.28.1', '0.26.5'];
+const channelSets = [['slack'], ['slack', 'discord'], ['slack', 'telegram'], ['slack'], ['discord']];
+
+export function generateOpenClawStatus(user: User): OpenClawStatus | null {
+  if (user.instanceState !== 'running') return null;
+  const seed = parseInt(user.id.replace(/\D/g, ''));
+  const r = (n: number) => seededRandom(seed * 7 + n);
+  const gwRunning = r(20) > 0.15;
+  return {
+    version: versions[Math.floor(r(21) * versions.length)],
+    gatewayState: gwRunning ? 'running' : r(22) > 0.5 ? 'stopped' : 'error',
+    lastActivity: new Date(Date.now() - Math.floor(r(23) * 3600000)).toISOString(),
+    model: models[Math.floor(r(24) * models.length)],
+    tokenUsage: {
+      prompt: Math.floor(r(25) * 500000),
+      completion: Math.floor(r(26) * 200000),
+      total: 0,
+    },
+    uptime: `${Math.floor(r(27) * 72)}h ${Math.floor(r(28) * 60)}m`,
+    channels: channelSets[Math.floor(r(29) * channelSets.length)],
+  };
+}
+
 export function getStats() {
   const running = mockUsers.filter(u => u.instanceState === 'running').length;
   const stopped = mockUsers.filter(u => u.instanceState === 'stopped').length;

@@ -133,6 +133,7 @@ export default function InfrastructurePage() {
               <th className="text-left px-4 py-3">AZ</th>
               <th className="text-left px-4 py-3">Status</th>
               <th className="text-left px-4 py-3">Slack</th>
+              <th className="text-left px-4 py-3">Actions</th>
             </tr>
           </thead>
           <tbody>
@@ -150,10 +151,22 @@ export default function InfrastructurePage() {
                 <td className="px-4 py-2 text-xs">{inst.az}</td>
                 <td className="px-4 py-2"><StatusBadge status={inst.state} /></td>
                 <td className="px-4 py-2 font-mono text-xs text-[var(--muted)]">{inst.slackUserId || '—'}</td>
+                <td className="px-4 py-2">
+                  {inst.instanceId && (
+                    <a
+                      href={`https://console.aws.amazon.com/systems-manager/session-manager/start-session?region=${inst.az?.slice(0, -1) || 'ap-northeast-2'}&target=${inst.instanceId}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-xs bg-orange-500/20 text-orange-400 px-2 py-1 rounded hover:bg-orange-500/30 inline-block"
+                    >
+                      SSM 접속
+                    </a>
+                  )}
+                </td>
               </tr>
             ))}
             {total === 0 && !loading && (
-              <tr><td colSpan={8} className="px-4 py-8 text-center text-[var(--muted)]">No instances in state</td></tr>
+              <tr><td colSpan={9} className="px-4 py-8 text-center text-[var(--muted)]">No instances in state</td></tr>
             )}
           </tbody>
         </table>

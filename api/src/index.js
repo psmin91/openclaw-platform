@@ -320,6 +320,60 @@ app.get('/api/metrics', (req, res) => {
   });
 });
 
+// ─── SSM Session URL ──────────────────────────────────────
+
+app.get('/api/instances/:instanceId/ssm-url', (req, res) => {
+  const { instanceId } = req.params;
+  const region = req.query.region || 'ap-northeast-2';
+  const url = `https://console.aws.amazon.com/systems-manager/session-manager/start-session?region=${region}&target=${instanceId}`;
+  res.json({ url, instanceId, region });
+});
+
+// ─── OpenClaw Status (per user) ──────────────────────────
+
+const models = ['claude-sonnet-4-20250514', 'claude-opus-4-20250514', 'gpt-4o', 'claude-3.5-haiku', 'gpt-4o-mini'];
+const versions = ['0.28.4', '0.28.3', '0.27.9', '0.28.1', '0.26.5'];
+
+app.get('/api/users/:id/openclaw-status', (req, res) => {
+  const user = users.find(u => u.id === req.params.id);
+  if (!user) return res.status(404).json({ error: 'User not found' });
+  if (user.instanceState !== 'running') {
+    return res.json({ status: 'offline', instanceState: user.instanceState });
+  }
+  const seed = parseInt(user.id.replace(/\D/g, '')) || 1;
+  const r = Math.abs(Math.sin(seed * 7)) ;
+  res.json({
+    status: 'online',
+    version: versions[Math.floor(r * versions.length)],
+    gatewayState: r > 0.15 ? 'running' : 'stopped',
+    lastActivity: new Date(Date.now() - Math.floor(r * 3600000)).toISOString(),
+    model: models[Math.floor(Math.abs(Math.sin(seed * 13)) * models.length)],
+    tokenUsage: {
+      prompt: Math.floor(r * 500000),
+      completion: Math.floor(Math.abs(Math.sin(seed * 19)) * 200000),
+      total: Math.floor(r * 500000 + Math.abs(Math.sin(seed * 19)) * 200000),
+    },
+    uptime: `${Math.floor(r * 72)}h ${Math.floor(Math.abs(Math.sin(seed * 23)) * 60)}m`,
+    channels: ['slack'],
+  });
+});
+
+app.get('/api/openclaw-status', (req, res) => {
+  const statuses = users.filter(u => u.instanceState === 'running').map(u => {
+    const seed = parseInt(u.id.replace(/\D/g, '')) || 1;
+    const r = Math.abs(Math.sin(seed * 7));
+    return {
+      userId: u.id,
+      name: u.name,
+      version: versions[Math.floor(r * versions.length)],
+      gatewayState: r > 0.15 ? 'running' : 'stopped',
+      model: models[Math.floor(Math.abs(Math.sin(seed * 13)) * models.length)],
+      tokenUsage: { total: Math.floor(r * 500000 + Math.abs(Math.sin(seed * 19)) * 200000) },
+    };
+  });
+  res.json({ statuses, total: statuses.length });
+});
+
 // ─── Slack Mapping ────────────────────────────────────────
 
 app.get('/api/slack/mappings', (req, res) => {

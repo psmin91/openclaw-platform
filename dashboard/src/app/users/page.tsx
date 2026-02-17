@@ -1,6 +1,6 @@
 'use client';
-import { useState, useEffect, useCallback } from 'react';
-import { mockUsers, User } from '@/lib/mock-data';
+import React, { useState, useEffect, useCallback } from 'react';
+import { mockUsers, User, generateOpenClawStatus, OpenClawStatus } from '@/lib/mock-data';
 import StatusBadge from '@/components/StatusBadge';
 
 const API = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
@@ -25,6 +25,7 @@ export default function UsersPage() {
   const [planResult, setPlanResult] = useState<PlanResult | null>(null);
   const [showPlan, setShowPlan] = useState(false);
   const [adding, setAdding] = useState(false);
+  const [expandedUser, setExpandedUser] = useState<string | null>(null);
 
   // Form state
   const [formName, setFormName] = useState('');
@@ -152,9 +153,9 @@ export default function UsersPage() {
                     }`}>
                       <span className="font-bold">{c.action === 'create' ? '+' : c.action === 'destroy' ? '-' : '~'}</span>
                       <span className="font-mono">{c.resource}</span>
-                      {c.detail?.instance_type && (
-                        <span className="ml-auto text-[var(--muted)]">{c.detail.instance_type as string}</span>
-                      )}
+                      {c.detail?.instance_type ? (
+                        <span className="ml-auto text-[var(--muted)]">{String(c.detail.instance_type)}</span>
+                      ) : null}
                     </div>
                   ))}
                 </div>
@@ -212,13 +213,16 @@ export default function UsersPage() {
               <th className="text-left px-4 py-3">Instance</th>
               <th className="text-left px-4 py-3">Status</th>
               <th className="text-left px-4 py-3">Region</th>
+              <th className="text-left px-4 py-3">OpenClaw</th>
               <th className="text-left px-4 py-3">Cost</th>
               <th className="text-left px-4 py-3">Actions</th>
             </tr>
           </thead>
           <tbody>
-            {filtered.map(u => (
-              <tr key={u.id} className="border-b border-[var(--border)] hover:bg-[var(--border)]/50">
+            {filtered.map(u => {
+              const oc = generateOpenClawStatus(u);
+              return (<React.Fragment key={u.id}>
+              <tr className="border-b border-[var(--border)] hover:bg-[var(--border)]/50 cursor-pointer" onClick={() => setExpandedUser(expandedUser === u.id ? null : u.id)}>
                 <td className="px-4 py-2">
                   <div className="font-medium">{u.name}</div>
                   <div className="text-xs text-[var(--muted)]">{u.email}</div>
@@ -236,6 +240,16 @@ export default function UsersPage() {
                 <td className="px-4 py-2 font-mono text-xs">{u.instanceId?.slice(0, 12) || '—'}</td>
                 <td className="px-4 py-2"><StatusBadge status={u.instanceState} /></td>
                 <td className="px-4 py-2 text-xs">{u.region}</td>
+                <td className="px-4 py-2">
+                  {oc ? (
+                    <div className="flex items-center gap-1.5">
+                      <span className={`w-2 h-2 rounded-full ${oc.gatewayState === 'running' ? 'bg-green-400' : oc.gatewayState === 'error' ? 'bg-red-400' : 'bg-yellow-400'}`}></span>
+                      <span className="text-xs">{oc.version}</span>
+                    </div>
+                  ) : (
+                    <span className="text-xs text-[var(--muted)]">—</span>
+                  )}
+                </td>
                 <td className="px-4 py-2">${u.monthlyCost}</td>
                 <td className="px-4 py-2">
                   <div className="flex gap-1">
@@ -248,12 +262,49 @@ export default function UsersPage() {
                     {u.instanceState === 'not_created' && (
                       <button className="text-xs bg-blue-500/20 text-blue-400 px-2 py-1 rounded hover:bg-blue-500/30">Create</button>
                     )}
-                    <button onClick={() => handleDelete(u.id)}
+                    {u.instanceId && (
+                      <a href={`https://console.aws.amazon.com/systems-manager/session-manager/start-session?region=${u.region}&target=${u.instanceId}`}
+                        target="_blank" rel="noopener noreferrer" onClick={e => e.stopPropagation()}
+                        className="text-xs bg-orange-500/20 text-orange-400 px-2 py-1 rounded hover:bg-orange-500/30">SSM</a>
+                    )}
+                    <button onClick={(e) => { e.stopPropagation(); handleDelete(u.id); }}
                       className="text-xs bg-red-500/20 text-red-400 px-2 py-1 rounded hover:bg-red-500/30">Delete</button>
                   </div>
                 </td>
               </tr>
-            ))}
+              {/* Expanded OpenClaw detail row */}
+              {expandedUser === u.id && oc && (
+                <tr key={`${u.id}-detail`} className="border-b border-[var(--border)] bg-[var(--bg)]">
+                  <td colSpan={9} className="px-6 py-3">
+                    <div className="grid grid-cols-5 gap-4 text-xs">
+                      <div>
+                        <span className="text-[var(--muted)]">Gateway</span>
+                        <div className={`font-medium ${oc.gatewayState === 'running' ? 'text-green-400' : 'text-red-400'}`}>
+                          {oc.gatewayState}
+                        </div>
+                      </div>
+                      <div>
+                        <span className="text-[var(--muted)]">Model</span>
+                        <div className="font-mono">{oc.model}</div>
+                      </div>
+                      <div>
+                        <span className="text-[var(--muted)]">Tokens (prompt / completion)</span>
+                        <div>{oc.tokenUsage.prompt.toLocaleString()} / {oc.tokenUsage.completion.toLocaleString()}</div>
+                      </div>
+                      <div>
+                        <span className="text-[var(--muted)]">Uptime</span>
+                        <div>{oc.uptime}</div>
+                      </div>
+                      <div>
+                        <span className="text-[var(--muted)]">Channels</span>
+                        <div>{oc.channels.join(', ')}</div>
+                      </div>
+                    </div>
+                  </td>
+                </tr>
+              )}
+              </React.Fragment>);
+            })}
           </tbody>
         </table>
       </div>
