@@ -6,6 +6,7 @@ const nav = [
   { href: '/', label: 'Dashboard', icon: '📊' },
   { href: '/users', label: 'Users', icon: '👥' },
   { href: '/instances', label: 'Instances', icon: '🖥️' },
+  { href: '/infrastructure', label: 'Infrastructure', icon: '🏗️' },
   { href: '/costs', label: 'Costs', icon: '💰' },
   { href: '/slack', label: 'Slack Mapping', icon: '💬' },
 ];

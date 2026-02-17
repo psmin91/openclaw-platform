@@ -1,19 +1,135 @@
 const express = require('express');
 const cors = require('cors');
+const fs = require('fs');
+const path = require('path');
+const { execSync } = require('child_process');
+
 const app = express();
 const PORT = process.env.PORT || 3001;
+const TERRAFORM_DIR = path.resolve(__dirname, '../../terraform');
+const MOCK_MODE = process.env.TERRAFORM_MOCK !== 'false'; // default: mock mode
 
 app.use(cors());
 app.use(express.json());
 
-// In-memory store (replace with SQLite/DynamoDB)
+// In-memory store
 let users = [];
 let nextId = 1;
 
-// Health check
-app.get('/health', (req, res) => res.json({ status: 'ok', timestamp: new Date().toISOString() }));
+// ─── Helpers ──────────────────────────────────────────────
 
-// --- Users CRUD ---
+function readTfvars() {
+  const p = path.join(TERRAFORM_DIR, 'terraform.tfvars.json');
+  if (!fs.existsSync(p)) return { users: {} };
+  return JSON.parse(fs.readFileSync(p, 'utf8'));
+}
+
+function writeTfvars(data) {
+  const p = path.join(TERRAFORM_DIR, 'terraform.tfvars.json');
+  fs.writeFileSync(p, JSON.stringify(data, null, 2));
+}
+
+function readTfstate() {
+  const p = path.join(TERRAFORM_DIR, 'terraform.tfstate');
+  if (!fs.existsSync(p)) return null;
+  return JSON.parse(fs.readFileSync(p, 'utf8'));
+}
+
+function parseInfraFromState(state) {
+  if (!state || !state.resources) return { instances: [], network: {} };
+
+  const instances = [];
+  const network = {};
+
+  for (const res of state.resources) {
+    if (res.type === 'aws_instance' && res.instances?.[0]) {
+      const attrs = res.instances[0].attributes;
+      const userMatch = res.module?.match(/user_instances\["(.+?)"\]/);
+      instances.push({
+        userId: userMatch ? userMatch[1] : null,
+        instanceId: attrs.id,
+        instanceType: attrs.instance_type,
+        publicIp: attrs.public_ip,
+        privateIp: attrs.private_ip,
+        state: attrs.instance_state,
+        az: attrs.availability_zone,
+        tags: attrs.tags || {},
+        slackUserId: attrs.tags?.SlackUserId || null,
+      });
+    }
+    if (res.type === 'aws_vpc' && res.instances?.[0]) {
+      network.vpcId = res.instances[0].attributes.id;
+      network.cidr = res.instances[0].attributes.cidr_block;
+    }
+    if (res.type === 'aws_subnet' && res.instances?.[0]) {
+      network.subnetId = res.instances[0].attributes.id;
+      network.subnetCidr = res.instances[0].attributes.cidr_block;
+      network.az = res.instances[0].attributes.availability_zone;
+    }
+    if (res.type === 'aws_security_group' && res.instances?.[0]) {
+      network.sgId = res.instances[0].attributes.id;
+    }
+  }
+
+  return { instances, network, serial: state.serial, terraformVersion: state.terraform_version };
+}
+
+function generateMockPlan(tfvars, state) {
+  const stateUsers = new Set();
+  if (state?.resources) {
+    for (const res of state.resources) {
+      if (res.type === 'aws_instance') {
+        const m = res.module?.match(/user_instances\["(.+?)"\]/);
+        if (m) stateUsers.add(m[1]);
+      }
+    }
+  }
+
+  const plannedUsers = new Set(Object.keys(tfvars.users || {}));
+  const toAdd = [...plannedUsers].filter(u => !stateUsers.has(u));
+  const toDestroy = [...stateUsers].filter(u => !plannedUsers.has(u));
+  const unchanged = [...plannedUsers].filter(u => stateUsers.has(u));
+
+  const changes = [];
+  for (const uid of toAdd) {
+    const u = tfvars.users[uid];
+    changes.push({
+      action: 'create',
+      resource: `module.user_instances["${uid}"].aws_instance.openclaw`,
+      detail: {
+        instance_type: u.instance_type,
+        ami: tfvars.openclaw_ami_id || 'ami-0abcdef1234567890',
+        tags: { User: uid, SlackUserId: u.slack_user_id },
+      },
+    });
+  }
+  for (const uid of toDestroy) {
+    changes.push({
+      action: 'destroy',
+      resource: `module.user_instances["${uid}"].aws_instance.openclaw`,
+      detail: {},
+    });
+  }
+
+  return {
+    add: toAdd.length,
+    change: 0,
+    destroy: toDestroy.length,
+    unchanged: unchanged.length,
+    changes,
+    summary: `Plan: ${toAdd.length} to add, 0 to change, ${toDestroy.length} to destroy.`,
+    raw: `Terraform will perform the following actions:\n\n` +
+      changes.map(c => `  # ${c.resource} will be ${c.action === 'create' ? 'created' : 'destroyed'}\n  ${c.action === 'create' ? '+' : '-'} resource "aws_instance" "${c.resource.split('.').pop()}" {\n      + instance_type = "${c.detail.instance_type || '?'}"\n    }`).join('\n\n') +
+      `\n\nPlan: ${toAdd.length} to add, 0 to change, ${toDestroy.length} to destroy.`,
+  };
+}
+
+// ─── Health ───────────────────────────────────────────────
+
+app.get('/health', (req, res) => res.json({ status: 'ok', mockMode: MOCK_MODE, timestamp: new Date().toISOString() }));
+
+// ─── Users CRUD ───────────────────────────────────────────
+
 app.get('/api/users', (req, res) => {
   const { status, plan, search } = req.query;
   let result = [...users];
@@ -35,13 +151,15 @@ app.get('/api/users/:id', (req, res) => {
 app.post('/api/users', (req, res) => {
   const { name, email, slackUserId, plan, region } = req.body;
   if (!name || !email || !slackUserId) return res.status(400).json({ error: 'Missing required fields' });
+
+  const instanceType = plan === 'enterprise' ? 't3.large' : plan === 'pro' ? 't3.medium' : 't3.small';
   const user = {
     id: `user-${String(nextId++).padStart(3, '0')}`,
     name, email, slackUserId,
     slackDisplayName: name.toLowerCase().replace(' ', '.'),
     instanceId: null,
     instanceState: 'not_created',
-    instanceType: plan === 'enterprise' ? 't3.large' : plan === 'pro' ? 't3.medium' : 't3.small',
+    instanceType,
     region: region || 'ap-northeast-2',
     plan: plan || 'basic',
     monthlyCost: 0,
@@ -51,7 +169,43 @@ app.post('/api/users', (req, res) => {
     createdAt: new Date().toISOString(),
   };
   users.push(user);
-  res.status(201).json(user);
+
+  // Update tfvars
+  const tfvars = readTfvars();
+  tfvars.users[user.id] = {
+    slack_user_id: slackUserId,
+    instance_type: instanceType,
+  };
+  writeTfvars(tfvars);
+
+  // Run terraform plan
+  const state = readTfstate();
+  let planResult;
+
+  if (MOCK_MODE) {
+    planResult = generateMockPlan(tfvars, state);
+  } else {
+    try {
+      const output = execSync('terraform plan -no-color -var-file=terraform.tfvars.json', {
+        cwd: TERRAFORM_DIR,
+        timeout: 60000,
+      }).toString();
+      const addMatch = output.match(/(\d+) to add/);
+      const changeMatch = output.match(/(\d+) to change/);
+      const destroyMatch = output.match(/(\d+) to destroy/);
+      planResult = {
+        add: addMatch ? parseInt(addMatch[1]) : 0,
+        change: changeMatch ? parseInt(changeMatch[1]) : 0,
+        destroy: destroyMatch ? parseInt(destroyMatch[1]) : 0,
+        raw: output,
+        summary: output.split('\n').filter(l => l.includes('Plan:')).pop() || '',
+      };
+    } catch (err) {
+      planResult = { error: true, message: err.message, raw: err.stderr?.toString() || '' };
+    }
+  }
+
+  res.status(201).json({ user, planResult });
 });
 
 app.put('/api/users/:id', (req, res) => {
@@ -64,11 +218,62 @@ app.put('/api/users/:id', (req, res) => {
 app.delete('/api/users/:id', (req, res) => {
   const idx = users.findIndex(u => u.id === req.params.id);
   if (idx === -1) return res.status(404).json({ error: 'User not found' });
+
+  const userId = users[idx].id;
   users.splice(idx, 1);
+
+  // Remove from tfvars
+  const tfvars = readTfvars();
+  delete tfvars.users[userId];
+  writeTfvars(tfvars);
+
   res.status(204).send();
 });
 
-// --- Instance Actions ---
+// ─── Terraform Plan (standalone) ──────────────────────────
+
+app.post('/api/terraform/plan', (req, res) => {
+  const tfvars = readTfvars();
+  const state = readTfstate();
+
+  if (MOCK_MODE) {
+    const planResult = generateMockPlan(tfvars, state);
+    return res.json(planResult);
+  }
+
+  try {
+    const output = execSync('terraform plan -no-color -var-file=terraform.tfvars.json', {
+      cwd: TERRAFORM_DIR,
+      timeout: 60000,
+    }).toString();
+    res.json({ raw: output });
+  } catch (err) {
+    res.status(500).json({ error: err.message, raw: err.stderr?.toString() || '' });
+  }
+});
+
+// ─── Terraform Apply (dummy) ─────────────────────────────
+
+app.post('/api/terraform/apply', (req, res) => {
+  res.json({
+    status: 'queued',
+    message: 'Apply queued. Infrastructure changes will be applied shortly.',
+    jobId: `apply-${Date.now()}`,
+    estimatedTime: '2-5 minutes',
+  });
+});
+
+// ─── Infrastructure Status (from tfstate) ────────────────
+
+app.get('/api/infrastructure', (req, res) => {
+  const state = readTfstate();
+  if (!state) return res.json({ instances: [], network: {}, error: 'No state file found' });
+  const infra = parseInfraFromState(state);
+  res.json(infra);
+});
+
+// ─── Instance Actions ─────────────────────────────────────
+
 app.post('/api/users/:id/instance/start', (req, res) => {
   const user = users.find(u => u.id === req.params.id);
   if (!user) return res.status(404).json({ error: 'User not found' });
@@ -92,17 +297,17 @@ app.post('/api/users/:id/instance/create', (req, res) => {
   res.json({ message: 'Instance creating', user });
 });
 
-// --- Heartbeat ---
+// ─── Heartbeat ────────────────────────────────────────────
+
 app.post('/api/heartbeat', (req, res) => {
-  const { userId, instanceId } = req.body;
+  const { userId } = req.body;
   const user = users.find(u => u.id === userId);
-  if (user) {
-    user.lastActive = new Date().toISOString();
-  }
+  if (user) user.lastActive = new Date().toISOString();
   res.json({ status: 'ok' });
 });
 
-// --- Metrics ---
+// ─── Metrics ──────────────────────────────────────────────
+
 app.get('/api/metrics', (req, res) => {
   const running = users.filter(u => u.instanceState === 'running');
   res.json({
@@ -115,7 +320,8 @@ app.get('/api/metrics', (req, res) => {
   });
 });
 
-// --- Slack Mapping ---
+// ─── Slack Mapping ────────────────────────────────────────
+
 app.get('/api/slack/mappings', (req, res) => {
   const mapped = users.filter(u => u.instanceId).map(u => ({
     userId: u.id,
@@ -126,4 +332,4 @@ app.get('/api/slack/mappings', (req, res) => {
   res.json({ mappings: mapped });
 });
 
-app.listen(PORT, () => console.log(`OpenClaw API running on :${PORT}`));
+app.listen(PORT, () => console.log(`OpenClaw API running on :${PORT} (mock mode: ${MOCK_MODE})`));
