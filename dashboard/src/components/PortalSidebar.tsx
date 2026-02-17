@@ -1,23 +1,22 @@
 'use client';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
+import { useAuth } from '@/lib/auth';
 
 const nav = [
-  { href: '/', label: 'Dashboard', icon: '📊' },
-  { href: '/users', label: 'Users', icon: '👥' },
-  { href: '/instances', label: 'Instances', icon: '🖥️' },
-  { href: '/infrastructure', label: 'Infrastructure', icon: '🏗️' },
-  { href: '/costs', label: 'Costs', icon: '💰' },
-  { href: '/slack', label: 'Slack Mapping', icon: '💬' },
+  { href: '/portal', label: 'My OpenClaw', icon: '🐾' },
+  { href: '/portal/settings', label: 'Settings', icon: '⚙️' },
+  { href: '/architecture', label: 'Architecture', icon: '🗺️' },
 ];
 
-export default function Sidebar() {
+export default function PortalSidebar() {
   const pathname = usePathname();
+  const { user, logout } = useAuth();
   return (
     <aside className="w-56 min-h-screen border-r border-[var(--border)] bg-[var(--card)] flex flex-col">
       <div className="p-4 border-b border-[var(--border)]">
         <h1 className="text-lg font-bold">🐾 OpenClaw</h1>
-        <p className="text-xs text-[var(--muted)]">Management Platform</p>
+        <p className="text-xs text-[var(--muted)]">User Portal</p>
       </div>
       <nav className="flex-1 p-2">
         {nav.map(n => (
@@ -29,8 +28,12 @@ export default function Sidebar() {
           </Link>
         ))}
       </nav>
-      <div className="p-4 border-t border-[var(--border)] text-xs text-[var(--muted)]">
-        v0.1.0 · Multi-Tenant
+      <div className="p-4 border-t border-[var(--border)]">
+        <div className="flex items-center justify-between mb-2">
+          <span className="text-xs text-[var(--muted)]">👤 {user?.name}</span>
+          <button onClick={logout} className="text-xs text-red-400 hover:text-red-300">Logout</button>
+        </div>
+        <p className="text-xs text-[var(--muted)]">v0.1.0 · User</p>
       </div>
     </aside>
   );
