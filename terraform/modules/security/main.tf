@@ -49,6 +49,15 @@ resource "aws_iam_role_policy" "ec2_cloudwatch" {
           "arn:aws:s3:::${var.project}-*",
           "arn:aws:s3:::${var.project}-*/*",
         ]
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "dynamodb:UpdateItem",
+          "dynamodb:PutItem",
+          "dynamodb:GetItem",
+        ]
+        Resource = "arn:aws:dynamodb:${var.aws_region}:*:table/${var.project}-*"
       }
     ]
   })

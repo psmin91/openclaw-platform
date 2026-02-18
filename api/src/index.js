@@ -7,7 +7,25 @@ const { execSync } = require('child_process');
 const app = express();
 const PORT = process.env.PORT || 3001;
 const TERRAFORM_DIR = path.resolve(__dirname, '../../terraform');
+const CONFIG_PATH = path.resolve(__dirname, '../../.aws-config.json');
 const MOCK_MODE = process.env.TERRAFORM_MOCK !== 'false'; // default: mock mode
+
+// ─── AWS Configuration ───────────────────────────────────
+function readAwsConfig() {
+  try {
+    if (fs.existsSync(CONFIG_PATH)) return JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'));
+  } catch {}
+  return {};
+}
+
+function writeAwsConfig(config) {
+  fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2));
+}
+
+function isAwsConfigured() {
+  const cfg = readAwsConfig();
+  return !!(cfg.awsAccountId && cfg.awsRegion && (cfg.useIamRole || (cfg.awsAccessKeyId && cfg.awsSecretAccessKey)));
+}
 
 app.use(cors());
 app.use(express.json());
@@ -384,6 +402,74 @@ app.get('/api/slack/mappings', (req, res) => {
     instanceState: u.instanceState,
   }));
   res.json({ mappings: mapped });
+});
+
+// ─── AWS Configuration API ────────────────────────────────
+
+app.get('/api/aws-config', (req, res) => {
+  const config = readAwsConfig();
+  // Never return secret key to frontend
+  const safe = { ...config, awsSecretAccessKey: config.awsSecretAccessKey ? '••••••••' : '' };
+  res.json({ config: safe, awsConfigured: isAwsConfigured() });
+});
+
+app.put('/api/aws-config', (req, res) => {
+  const existing = readAwsConfig();
+  const update = { ...req.body };
+  // If masked, keep existing secret
+  if (update.awsSecretAccessKey === '••••••••') {
+    update.awsSecretAccessKey = existing.awsSecretAccessKey || '';
+  }
+  writeAwsConfig(update);
+  res.json({ ok: true, awsConfigured: isAwsConfigured() });
+});
+
+app.post('/api/aws-config/test', async (req, res) => {
+  const config = req.body;
+  const configured = !!(config.awsAccountId && config.awsRegion &&
+    (config.useIamRole || (config.awsAccessKeyId && config.awsSecretAccessKey && config.awsSecretAccessKey !== '••••••••')));
+
+  if (!configured) {
+    return res.json({ ok: false, message: 'Incomplete configuration. Fill in all required fields.' });
+  }
+
+  // In mock mode or if we can't actually call AWS, simulate
+  if (MOCK_MODE || config.useIamRole) {
+    return res.json({
+      ok: true,
+      message: `Account: ${config.awsAccountId}, Region: ${config.awsRegion}` +
+        (config.useIamRole ? ' (IAM Role mode — will verify at runtime)' : ''),
+    });
+  }
+
+  // Try real STS call
+  try {
+    const { STSClient, GetCallerIdentityCommand } = require('@aws-sdk/client-sts');
+    const sts = new STSClient({
+      region: config.awsRegion,
+      credentials: {
+        accessKeyId: config.awsAccessKeyId,
+        secretAccessKey: config.awsSecretAccessKey,
+      },
+    });
+    const identity = await sts.send(new GetCallerIdentityCommand({}));
+    res.json({
+      ok: true,
+      message: `✅ Verified! Account: ${identity.Account}, ARN: ${identity.Arn}`,
+    });
+  } catch (err) {
+    res.json({ ok: false, message: `AWS Error: ${err.message}` });
+  }
+});
+
+// ─── Mode Status ──────────────────────────────────────────
+
+app.get('/api/mode', (req, res) => {
+  res.json({
+    awsConfigured: isAwsConfigured(),
+    mockMode: MOCK_MODE,
+    mode: isAwsConfigured() && !MOCK_MODE ? 'live' : 'demo',
+  });
 });
 
 app.listen(PORT, () => console.log(`OpenClaw API running on :${PORT} (mock mode: ${MOCK_MODE})`));

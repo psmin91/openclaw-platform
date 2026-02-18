@@ -74,7 +74,7 @@ module "user_instances" {
   instance_type         = each.value.instance_type
   model                 = lookup(each.value, "model", "claude-sonnet")
   ami_id                = var.openclaw_ami_id
-  subnet_id             = module.networking.private_subnet_ids[0]
+  subnet_id             = var.use_public_subnets_for_instances ? module.networking.public_subnet_ids[0] : module.networking.private_subnet_ids[0]
   security_group_id     = module.security.openclaw_instance_sg_id
   instance_profile_name = module.security.ec2_instance_profile_name
   key_name              = var.key_name
@@ -104,6 +104,23 @@ module "storage" {
       openclaw_port = lookup(user_cfg, "port", 3000)
     }
   }
+}
+
+################################################################################
+# Management (Dashboard + API)
+################################################################################
+module "management" {
+  source = "../../modules/management"
+
+  project     = local.project
+  environment = local.environment
+  vpc_id      = module.networking.vpc_id
+  subnet_id   = module.networking.public_subnet_ids[0]
+  ami_id      = var.management_ami_id != "" ? var.management_ami_id : var.openclaw_ami_id
+  instance_type = "t3.small"
+  key_name    = var.key_name
+  admin_cidr  = var.admin_cidr != "" ? var.admin_cidr : "0.0.0.0/0"
+  common_tags = local.common_tags
 }
 
 ################################################################################
@@ -161,4 +178,12 @@ output "user_instances" {
 
 output "dynamodb_table" {
   value = module.storage.user_mappings_table_name
+}
+
+output "dashboard_url" {
+  value = module.management.dashboard_url
+}
+
+output "management_ip" {
+  value = module.management.public_ip
 }

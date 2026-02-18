@@ -2,6 +2,7 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useAuth } from '@/lib/auth';
+import ModeBadge from '@/components/ModeBadge';
 
 const nav = [
   { href: '/admin', label: 'Dashboard', icon: '📊' },
@@ -10,6 +11,7 @@ const nav = [
   { href: '/admin/infrastructure', label: 'Infrastructure', icon: '🏗️' },
   { href: '/admin/costs', label: 'Costs', icon: '💰' },
   { href: '/admin/slack', label: 'Slack Mapping', icon: '💬' },
+  { href: '/admin/settings', label: 'Settings', icon: '⚙️' },
   { href: '/architecture', label: 'Architecture', icon: '🗺️' },
 ];
 
@@ -20,7 +22,10 @@ export default function AdminSidebar() {
     <aside className="w-56 min-h-screen border-r border-[var(--border)] bg-[var(--card)] flex flex-col">
       <div className="p-4 border-b border-[var(--border)]">
         <h1 className="text-lg font-bold">🐾 OpenClaw</h1>
-        <p className="text-xs text-[var(--muted)]">Admin Dashboard</p>
+        <div className="flex items-center gap-2">
+          <p className="text-xs text-[var(--muted)]">Admin Dashboard</p>
+          <ModeBadge />
+        </div>
       </div>
       <nav className="flex-1 p-2">
         {nav.map(n => (

@@ -146,6 +146,20 @@ resource "aws_vpc_endpoint" "s3" {
   })
 }
 
+resource "aws_vpc_endpoint" "dynamodb" {
+  vpc_id       = aws_vpc.main.id
+  service_name = "com.amazonaws.${var.aws_region}.dynamodb"
+
+  route_table_ids = [
+    aws_route_table.public.id,
+    aws_route_table.private.id,
+  ]
+
+  tags = merge(var.common_tags, {
+    Name = "${var.project}-vpce-dynamodb"
+  })
+}
+
 resource "aws_vpc_endpoint" "ssm" {
   count = var.enable_vpc_endpoints ? 1 : 0
 

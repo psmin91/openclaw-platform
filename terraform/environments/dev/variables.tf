@@ -15,7 +15,14 @@ variable "az_count" {
 
 variable "enable_nat_gateway" {
   type    = bool
+  default = false
+  description = "Enable NAT Gateway. Set false for dev to save costs."
+}
+
+variable "use_public_subnets_for_instances" {
+  type    = bool
   default = true
+  description = "Place EC2 instances in public subnets (dev cost optimization). In prod, use private subnets + NAT."
 }
 
 variable "enable_vpc_endpoints" {
@@ -30,6 +37,12 @@ variable "admin_cidr" {
 
 variable "openclaw_ami_id" {
   type = string
+}
+
+variable "management_ami_id" {
+  type        = string
+  default     = ""
+  description = "AMI for management instance (Amazon Linux 2023). If empty, uses openclaw_ami_id."
 }
 
 variable "key_name" {

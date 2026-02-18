@@ -6,10 +6,11 @@ aws_region      = "ap-northeast-2"
 openclaw_ami_id = "ami-0abcdef1234567890" # TODO: replace with real AMI
 key_name        = "openclaw-key"
 
-# Cost optimization for dev
-enable_nat_gateway   = true
-enable_vpc_endpoints = false
-lambda_in_vpc        = true
+# Cost optimization for dev — no NAT GW, use public subnets
+enable_nat_gateway              = false
+use_public_subnets_for_instances = true
+enable_vpc_endpoints            = false
+lambda_in_vpc                   = true
 
 # Slack (set via TF_VAR_slack_signing_secret, TF_VAR_slack_bot_token env vars)
 # slack_signing_secret = ""

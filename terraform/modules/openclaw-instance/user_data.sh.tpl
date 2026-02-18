@@ -14,6 +14,26 @@ ENVEOF
 systemctl enable amazon-ssm-agent || true
 systemctl start amazon-ssm-agent || true
 
+# ── Register in DynamoDB (update IP on every boot) ───────────────────────────
+INSTANCE_ID=$(curl -s http://169.254.169.254/latest/meta-data/instance-id)
+INSTANCE_IP=$(curl -s http://169.254.169.254/latest/meta-data/local-ipv4)
+AWS_REGION=$(curl -s http://169.254.169.254/latest/meta-data/placement/region)
+
+aws dynamodb update-item \
+  --table-name "${project}-user-mappings" \
+  --key '{"slack_user_id": {"S": "${slack_user_id}"}}' \
+  --update-expression "SET instance_id = :iid, instance_ip = :ip, openclaw_port = :port, #s = :status, user_id = :uid, updated_at = :now" \
+  --expression-attribute-names '{"#s": "status"}' \
+  --expression-attribute-values "{
+    \":iid\": {\"S\": \"$INSTANCE_ID\"},
+    \":ip\": {\"S\": \"$INSTANCE_IP\"},
+    \":port\": {\"N\": \"${openclaw_port}\"},
+    \":status\": {\"S\": \"active\"},
+    \":uid\": {\"S\": \"${user_id}\"},
+    \":now\": {\"S\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}
+  }" \
+  --region "$AWS_REGION" || echo "DynamoDB update failed (non-fatal)"
+
 # ── CloudWatch Agent ─────────────────────────────────────────────────────────
 if ! command -v amazon-cloudwatch-agent-ctl &>/dev/null; then
   yum install -y amazon-cloudwatch-agent 2>/dev/null || \
