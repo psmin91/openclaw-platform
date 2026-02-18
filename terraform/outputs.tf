@@ -1,7 +1,4 @@
-output "vpc_id" {
-  value = aws_vpc.openclaw.id
-}
-
-output "instance_details" {
-  value = { for k, v in module.user_instances : k => v.instance_details }
-}
+# ─────────────────────────────────────────────────────────────────────────────
+# Root outputs.tf is kept for reference.
+# Actual outputs are defined per-environment in environments/{env}/main.tf
+# ─────────────────────────────────────────────────────────────────────────────
